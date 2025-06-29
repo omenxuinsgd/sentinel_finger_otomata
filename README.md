@@ -1,177 +1,123 @@
-🔒 Sistem Pengenalan Sidik Jari Modern
-Sistem Pengenalan Sidik Jari ini adalah solusi komprehensif yang memungkinkan pendaftaran (enrollment) dan identifikasi biometrik menggunakan perangkat keras pemindai sidik jari. Sistem ini dirancang dengan arsitektur modular, memisahkan logika antarmuka pengguna, manajemen data, dan interaksi perangkat keras untuk skalabilitas dan pemeliharaan yang lebih baik.
+# 🧬 Fingerprint Enrollment Server (Node.js + Python Agent + SQLite)
 
-✨ Fitur Utama
-Inisialisasi Perangkat Otomatis: Deteksi dan inisialisasi pemindai sidik jari.
+Sistem backend untuk **pendaftaran sidik jari** yang terhubung dengan agen Python untuk akuisisi, pemrosesan, dan penyimpanan data biometrik lengkap, termasuk template FMR dan gambar jari 4-4-2.
 
-Pratinjau Langsung Sidik Jari: Tampilan real-time dari sidik jari yang dipindai saat pengambilan.
+---
 
-Pendaftaran Sidik Jari (Enrollment Otomatis 4-4-2):
+## 🚀 Fitur Utama
 
-Proses terpandu untuk merekam 10 jari (4 jari kiri, 4 jari kanan, 2 jempol).
+* 🔗 **Integrasi langsung dengan agen Python sidik jari**
+* 📀 **Penyimpanan SQLite** untuk FMR dan gambar dalam format `BLOB`
+* 📡 **API HTTP & WebSocket** untuk komunikasi real-time dengan client/frontend
+* 🧠 **Konsolidasi data sidik jari per pengguna** (10 FMR + 13 gambar)
+* ✅ Transaksi database aman (atomic `BEGIN/COMMIT/ROLLBACK`)
+* 🔒 Validasi ID unik & rollback saat gagal
 
-Penyimpanan data pengguna (Nama, Nomor ID) bersama dengan template sidik jari ke database SQLite.
+---
 
-Verifikasi Sidik Jari (1:1):
+## 🗂️ Struktur Database SQLite
 
-Kemampuan untuk mengambil dua template sidik jari secara manual dan membandingkannya (verifikasi satu-ke-satu).
+### Tabel: `users_and_templates`
 
-Identifikasi Sidik Jari (1:N):
+Menyimpan identitas pengguna dan **10 template FMR** per jari.
 
-Identifikasi satu sidik jari yang dipindai terhadap semua template yang tersimpan dalam database untuk menemukan kecocokan.
+| Kolom                                 | Tipe                 |
+| ------------------------------------- | -------------------- |
+| id                                    | INTEGER PRIMARY KEY  |
+| id\_number                            | TEXT NOT NULL UNIQUE |
+| name                                  | TEXT NOT NULL        |
+| enrollment\_date                      | DATETIME             |
+| fmr\_right\_thumb → fmr\_left\_little | BLOB (per jari)      |
 
-Arsitektur Fleksibel: Desain yang memisahkan Frontend, Backend (Node.js), dan Agen Python untuk pemrosesan sidik jari.
+---
 
-Komunikasi Real-time: Menggunakan WebSocket untuk umpan balik langsung dari perangkat ke antarmuka pengguna.
+### Tabel: `fingerprint_images`
 
-🏛️ Arsitektur Sistem
-Sistem ini terbagi menjadi tiga komponen utama yang saling berinteraksi:
+Menyimpan **gambar individual per jari (10)** dan **3 gambar slap (4-4-2)**.
 
-Antarmuka Pengguna (Frontend - Next.js):
+| Kolom                                 | Tipe                |
+| ------------------------------------- | ------------------- |
+| id                                    | INTEGER PRIMARY KEY |
+| user\_id (FK)                         | INTEGER             |
+| img\_right\_thumb → img\_left\_little | BLOB                |
+| img\_slap\_right\_four                | BLOB                |
+| img\_slap\_left\_four                 | BLOB                |
+| img\_slap\_two\_thumbs                | BLOB                |
 
-Dibangun dengan React (Next.js).
+---
 
-Menyediakan antarmuka grafis yang intuitif bagi pengguna untuk berinteraksi dengan sistem.
+## 🧪 API Endpoint
 
-Mengirim permintaan HTTP ke Node.js Backend dan menerima pembaruan real-time melalui WebSocket.
+### 🔹 `/api/start_enrollment`
 
-Layanan Backend (Node.js/Express):
+Trigger proses perekaman awal ke agen Python.
 
-Dibangun dengan Node.js menggunakan framework Express.js.
+### 🔹 `/api/save_enrollment`
 
-Berfungsi sebagai API Gateway utama, menerima permintaan dari Frontend.
+Ambil data dari agen Python (FMR + gambar), simpan ke DB (otomatis transaksi dan validasi).
 
-Mengelola Database SQLite untuk menyimpan data pengguna dan template sidik jari.
+### 🔹 `/api/get-all-templates`
 
-Bertindak sebagai Proxy antara Frontend dan Python Agent untuk permintaan HTTP dan WebSocket, meneruskan data yang relevan.
+Ambil semua FMR pengguna, digabung sebagai `base64`.
 
-Agen Sidik Jari (Python/Flask-SocketIO/ctypes):
+### 🔹 `/api/init-device`, `/api/config`
 
-Dibangun dengan Python menggunakan Flask-SocketIO.
+Inisialisasi dan konfigurasi perangkat biometrik dari agen Python.
 
-Ini adalah inti yang berinteraksi langsung dengan perangkat keras pemindai sidik jari.
+### 🔹 `/api/create_template`, `/api/match_templates`
 
-Menggunakan pustaka ctypes untuk memanggil fungsi dari DLL (Dynamic Link Libraries) perangkat keras.
+Pemrosesan template di sisi agen.
 
-Melakukan pemrosesan gambar, ekstraksi template (FMR), dan algoritma pencocokan biometrik.
+### 🔹 `/api/identify`
 
-Mengirim pratinjau langsung dan status operasi kembali ke Node.js Backend melalui WebSocket.
+Trigger proses identifikasi (1\:N).
 
-graph LR
-    A[Frontend: Next.js] -- HTTP API & WebSocket --> B(Backend: Node.js/Express)
-    B -- HTTP API & WebSocket --> C(Python Agent: Flask/ctypes)
-    C -- Interaksi Langsung (DLLs) --> D[Perangkat Keras Pemindai Sidik Jari]
-    B -- Database Interaksi --> E[SQLite Database]
+---
 
-🛠️ Prasyarat
-Sebelum Anda dapat menjalankan sistem ini, pastikan Anda memiliki hal-hal berikut terinstal:
+## 🌐 WebSocket Events
 
-Node.js: Unduh & Instal Node.js (disertakan npm).
+| Event Name              | Fungsi                   |
+| ----------------------- | ------------------------ |
+| `live_preview`          | Stream citra langsung    |
+| `enrollment_step`       | Progres pendaftaran      |
+| `capture_result`        | Hasil capture jari       |
+| `identification_step`   | Status pencocokan        |
+| `identification_result` | Hasil identifikasi akhir |
 
-Python: Unduh & Instal Python.
+---
 
-PENTING: Karena interaksi dengan DLL Windows, sangat disarankan untuk menggunakan Python versi 32-bit jika Anda menggunakan sistem operasi Windows 64-bit.
+## ⚙️ Teknologi Digunakan
 
-DLL Perangkat Keras Sidik Jari: Pastikan Anda memiliki file DLL yang diperlukan (ZAZ_FpStdLib.dll, GALSXXYY.dll, Gamc.dll, FpSplit.dll, imagecut.dll) yang disediakan oleh produsen perangkat keras pemindai sidik jari Anda. File-file ini tidak termasuk dalam repositori ini.
+* **Node.js + Express** untuk HTTP API dan server
+* **SQLite3** sebagai database ringan lokal
+* **Socket.IO** untuk komunikasi realtime
+* **Axios** sebagai proxy HTTP ke agen Python
+* **Python Agent** sebagai pengolah biometrik
 
-🚀 Instalasi & Penyiapan
-Ikuti langkah-langkah di bawah ini untuk menyiapkan dan menjalankan aplikasi:
+---
 
-Klon Repositori (Jika berlaku):
+## 📦 Instalasi
 
-git clone <URL_REPOSITORI_ANDA>
-cd <nama_folder_proyek>
-
-Penyiapan Backend (Node.js):
-Navigasi ke direktori server.js Anda (asumsikan berada di root proyek atau di folder backend/).
-
-cd path/ke/folder/server_node
+```bash
 npm install
-
-Penyiapan Agen Python:
-Navigasi ke direktori agent.py Anda.
-
-cd path/ke/folder/agent_python
-pip install Flask Flask-SocketIO eventlet requests opencv-python numpy
-
-Tempatkan file DLL (.dll) yang diperlukan (disebutkan di bagian Prasyarat) di direktori yang sama dengan file agent.py.
-
-Penyiapan Frontend (Next.js):
-Navigasi ke direktori page.js Anda (asumsikan ini adalah bagian dari proyek Next.js).
-
-cd path/ke/folder/frontend_nextjs
-npm install
-
-Catatan untuk react-toastify: Jika Anda mengalami masalah CSS dengan react-toastify, pastikan import 'react-toastify/dist/ReactToastify.css'; ada di file _app.js (untuk Pages Router) atau di file CSS global yang diimpor di layout.js (untuk App Router) di proyek Next.js Anda.
-
-▶️ Menjalankan Aplikasi
-PENTING: Urutan menjalankan komponen sangat krusial!
-
-Mulai Layanan Backend Node.js:
-Buka terminal baru, navigasi ke direktori server.js Anda, dan jalankan:
-
 node server.js
+```
 
-Anda akan melihat output konsol yang menunjukkan database SQLite telah diinisialisasi dan server berjalan pada http://localhost:3000.
+Pastikan agen Python sidik jari berjalan di `http://127.0.0.1:5000`.
 
-Mulai Agen Python:
-Buka terminal baru (biarkan terminal Node.js tetap berjalan), navigasi ke direktori agent.py Anda, dan jalankan:
+---
 
-python agent.py
+## 📁 Struktur File
 
-Anda akan melihat output konsol yang menunjukkan agen Python memulai server Flask-SocketIO pada http://127.0.0.1:5000.
+```
+📆 server/
+ ├── server.js           # Entry point backend
+ └── fingerprint_database.sqlite
+```
 
-Mulai Aplikasi Frontend Next.js:
-Buka terminal baru (biarkan kedua terminal lainnya tetap berjalan), navigasi ke direktori proyek Next.js Anda (tempat page.js berada), dan jalankan:
+---
 
-npm run dev
-# atau
-yarn dev
+## 👤 Penulis
 
-Aplikasi frontend akan terbuka di browser Anda (biasanya http://localhost:3001).
-
-👨‍💻 Penggunaan Aplikasi
-Setelah semua komponen berjalan:
-
-Inisialisasi Perangkat: Klik tombol "Inisialisasi Perangkat" di bagian "Kontrol Perangkat". Anda harus melihat status berubah menjadi "READY".
-
-Enrollment Otomatis (4-4-2):
-
-Isi kolom "Nama" dan "Nomor ID".
-
-Klik "Mulai Enrollment Otomatis".
-
-Ikuti instruksi di layar (atau di pratinjau langsung) untuk meletakkan jari Anda. Sistem akan memandu Anda melalui pengambilan 4 jari kiri, 4 jari kanan, dan 2 jempol.
-
-Verifikasi Manual (1:1):
-
-Di bagian "Verifikasi Manual (1:1)", gunakan tombol "4 Jari Kiri", "4 Jari Kanan", atau "2 Jempol" untuk mengambil "Template Manual 1" dan "Template Manual 2".
-
-Setelah kedua template diambil, tombol "Cocokkan Template 1 vs 2" akan aktif. Klik untuk melihat hasil perbandingan.
-
-Identifikasi (1:N):
-
-Di bagian "Identifikasi (1:N)", klik tombol "Mulai Identifikasi".
-
-Letakkan jari apa pun pada pemindai. Sistem akan mencoba mencocokkan sidik jari yang dipindai dengan semua template yang tersimpan dalam database dan menampilkan hasil kecocokan.
-
-⚠️ Pemecahan Masalah Umum
-sqlite3.OperationalError: no such table: users_and_templates di agent.py:
-
-Ini berarti agen Python mencoba mengakses database sebelum tabelnya dibuat. Pastikan Anda selalu menjalankan server.js terlebih dahulu dan menunggu hingga database diinisialisasi sepenuhnya sebelum menjalankan agent.py.
-
-ECONNREFUSED atau masalah koneksi:
-
-Periksa apakah server.js (port 3000) dan agent.py (port 5000) sedang berjalan dengan benar dan tidak ada firewall yang memblokir port tersebut.
-
-Masalah DLL loading di agent.py:
-
-Pastikan Anda menggunakan interpretasi Python 32-bit (terutama di Windows 64-bit).
-
-Pastikan semua file DLL yang diperlukan berada di direktori yang sama dengan agent.py.
-
-Gaya react-toastify tidak muncul di frontend:
-
-Pastikan import 'react-toastify/dist/ReactToastify.css'; diimpor di file _app.js atau file layout utama lainnya dalam proyek Next.js Anda.
-
-Made with ❤️ by Your Name/Team
+**Nur Rokhman**
+RnD MajoreIT
