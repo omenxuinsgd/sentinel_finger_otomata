@@ -1,123 +1,137 @@
-# 🧬 Fingerprint Enrollment Server (Node.js + Python Agent + SQLite)
+# Flask Fingerprint Agent with DLL Integration & 1\:N Matching
 
-Sistem backend untuk **pendaftaran sidik jari** yang terhubung dengan agen Python untuk akuisisi, pemrosesan, dan penyimpanan data biometrik lengkap, termasuk template FMR dan gambar jari 4-4-2.
+This Python Flask application serves as a local **fingerprint processing agent** for a biometric system. It uses native Windows DLLs to communicate with a fingerprint scanner, handle segmentation, ISO template creation, and perform 1:1 and 1\:N matching. It connects to a Node.js backend for storage and template retrieval.
 
----
+## ✨ Features
 
-## 🚀 Fitur Utama
+* Real-time fingerprint capture with **quality check & preview**
+* Supports **4-4-2 fingerprint enrollment** (4 left fingers, 4 right fingers, 2 thumbs)
+* Auto segmentation with `FpSplit.dll`
+* Template creation with `ZAZ_FpStdLib.dll`
+* Image quality scoring with `Gamc.dll`
+* Live preview over WebSocket (`flask-socketio`)
+* **1:1 template matching** (manual)
+* **1\:N identification** against a database via Node.js API
+* DLL loading and validation on startup
+* Base64 exchange of templates/images with Node.js server
 
-* 🔗 **Integrasi langsung dengan agen Python sidik jari**
-* 📀 **Penyimpanan SQLite** untuk FMR dan gambar dalam format `BLOB`
-* 📡 **API HTTP & WebSocket** untuk komunikasi real-time dengan client/frontend
-* 🧠 **Konsolidasi data sidik jari per pengguna** (10 FMR + 13 gambar)
-* ✅ Transaksi database aman (atomic `BEGIN/COMMIT/ROLLBACK`)
-* 🔒 Validasi ID unik & rollback saat gagal
+## ⚙ Requirements
 
----
+* Python 3.9 (32-bit recommended)
+* Windows OS (for DLL support)
+* Fingerprint scanner compatible with GALSXXYY.dll
+* Installed Python packages:
 
-## 🗂️ Struktur Database SQLite
+  ```bash
+  pip install flask flask-socketio eventlet opencv-python numpy requests
+  ```
+* Native DLLs (place in the same folder):
 
-### Tabel: `users_and_templates`
+  * `ZAZ_FpStdLib.dll`
+  * `GALSXXYY.dll`
+  * `Gamc.dll`
+  * `FpSplit.dll`
+  * `imagecut.dll`
 
-Menyimpan identitas pengguna dan **10 template FMR** per jari.
+## 🔧 How It Works
 
-| Kolom                                 | Tipe                 |
-| ------------------------------------- | -------------------- |
-| id                                    | INTEGER PRIMARY KEY  |
-| id\_number                            | TEXT NOT NULL UNIQUE |
-| name                                  | TEXT NOT NULL        |
-| enrollment\_date                      | DATETIME             |
-| fmr\_right\_thumb → fmr\_left\_little | BLOB (per jari)      |
+### Enrollment Flow (4-4-2)
 
----
+1. Capture 4 left fingers
+2. Capture 4 right fingers
+3. Capture 2 thumbs
+4. Segment each finger and create templates
+5. Store base64-encoded templates/images in memory
+6. POST to Node.js backend
 
-### Tabel: `fingerprint_images`
+### Manual 1:1 Match
 
-Menyimpan **gambar individual per jari (10)** dan **3 gambar slap (4-4-2)**.
+* Create template 1 from any scan
+* Create template 2 from a different scan
+* Match with ZAZ DLL scoring (threshold ≥ 45)
 
-| Kolom                                 | Tipe                |
-| ------------------------------------- | ------------------- |
-| id                                    | INTEGER PRIMARY KEY |
-| user\_id (FK)                         | INTEGER             |
-| img\_right\_thumb → img\_left\_little | BLOB                |
-| img\_slap\_right\_four                | BLOB                |
-| img\_slap\_left\_four                 | BLOB                |
-| img\_slap\_two\_thumbs                | BLOB                |
+### Identification (1\:N)
 
----
+* Capture any finger
+* Create ISO templates for each detected finger
+* Retrieve all combined templates from Node.js
+* Iterate and compare one-by-one (score ≥ 55)
+* Stop and return match on first hit
 
-## 🧪 API Endpoint
+## ♻ API Endpoints
 
-### 🔹 `/api/start_enrollment`
+| Method | Endpoint                   | Description                          |
+| ------ | -------------------------- | ------------------------------------ |
+| POST   | `/api/init`                | Initialize scanner device            |
+| POST   | `/api/start_enrollment`    | Begin 4-4-2 capture workflow         |
+| GET    | `/api/get_enrollment_data` | Get last captured templates/images   |
+| POST   | `/api/create_template`     | Capture one template manually        |
+| POST   | `/api/match_templates`     | Match two manually created templates |
+| POST   | `/api/identify`            | Identify single finger to DB         |
+| POST   | `/api/config`              | Adjust quality threshold, timeout    |
+| GET    | `/api/status`              | Get device status and init status    |
 
-Trigger proses perekaman awal ke agen Python.
+## 📲 SocketIO Events
 
-### 🔹 `/api/save_enrollment`
+| Event                   | Direction       | Data Format                                     |
+| ----------------------- | --------------- | ----------------------------------------------- |
+| `live_preview`          | server → client | `{ image_data: base64 JPEG }`                   |
+| `enrollment_step`       | server → client | `{ step: number, message: text }`               |
+| `capture_result`        | server → client | `{ success: bool, message: text }`              |
+| `identification_step`   | server → client | `{ message: text }`                             |
+| `identification_result` | server → client | `{ success, found, name?, id_number?, score? }` |
 
-Ambil data dari agen Python (FMR + gambar), simpan ke DB (otomatis transaksi dan validasi).
-
-### 🔹 `/api/get-all-templates`
-
-Ambil semua FMR pengguna, digabung sebagai `base64`.
-
-### 🔹 `/api/init-device`, `/api/config`
-
-Inisialisasi dan konfigurasi perangkat biometrik dari agen Python.
-
-### 🔹 `/api/create_template`, `/api/match_templates`
-
-Pemrosesan template di sisi agen.
-
-### 🔹 `/api/identify`
-
-Trigger proses identifikasi (1\:N).
-
----
-
-## 🌐 WebSocket Events
-
-| Event Name              | Fungsi                   |
-| ----------------------- | ------------------------ |
-| `live_preview`          | Stream citra langsung    |
-| `enrollment_step`       | Progres pendaftaran      |
-| `capture_result`        | Hasil capture jari       |
-| `identification_step`   | Status pencocokan        |
-| `identification_result` | Hasil identifikasi akhir |
-
----
-
-## ⚙️ Teknologi Digunakan
-
-* **Node.js + Express** untuk HTTP API dan server
-* **SQLite3** sebagai database ringan lokal
-* **Socket.IO** untuk komunikasi realtime
-* **Axios** sebagai proxy HTTP ke agen Python
-* **Python Agent** sebagai pengolah biometrik
-
----
-
-## 📦 Instalasi
+## 🚀 Run the Agent
 
 ```bash
-npm install
-node server.js
+python agent.py
 ```
 
-Pastikan agen Python sidik jari berjalan di `http://127.0.0.1:5000`.
+> Flask server runs on `http://127.0.0.1:5000`
+
+## 🏆 DLL Function Summary
+
+| DLL                              | Function Purpose                           |
+| -------------------------------- | ------------------------------------------ |
+| `LIVESCAN_GetFPRawData`          | Capture live raw fingerprint image         |
+| `MOSAIC_FingerQuality`           | Assess image quality score                 |
+| `FPSPLIT_DoSplit`                | Segment slap image into individual fingers |
+| `ZAZ_FpStdLib_CreateISOTemplate` | Generate ISO template from finger image    |
+| `ZAZ_FpStdLib_CompareTemplates`  | Compare two ISO templates                  |
+
+## ✨ Tips & Notes
+
+* Use `template_no: 1` and `template_no: 2` to match different fingers
+* Image size assumed: `1600x1500`
+* Matching threshold:
+
+  * 1:1: score ≥ 45
+  * 1\:N: score ≥ 55
+* Left hand images & templates are reversed after capture
+* Database handled by Node.js using SQLite
+
+## ⚖ Architecture Diagram (High-Level)
+
+```
++-----------+           WebSocket/API           +------------+           
+| Web App   | <---------Node.js Server--------> | Flask Agent| 
++-----------+           SQLite (Templates)      +------------+          
+                                                | DLLs
+                                                |-- ZAZ_FpStdLib.dll
+                                                |-- Gamc.dll
+                                                |-- FpSplit.dll
+                                                |-- GALSXXYY.dll
+                                                |-- imagecut.dll
+```
+
+## 🚫 Error Handling
+
+* If DLL fails to load: Make sure you're on Python 32-bit & DLLs exist
+* If device not found: Check hardware connection
+* If capture fails: Adjust lighting and finger placement
 
 ---
 
-## 📁 Struktur File
-
-```
-📆 server/
- ├── server.js           # Entry point backend
- └── fingerprint_database.sqlite
-```
+> Need help or improvements? Contribute or ask in Issues!
 
 ---
-
-## 👤 Penulis
-
-**Nur Rokhman**
-RnD MajoreIT
